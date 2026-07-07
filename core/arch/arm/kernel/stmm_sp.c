@@ -794,6 +794,61 @@ static void spm_eret_error(int32_t error_code, struct thread_scall_regs *regs)
 }
 
 #define FILENAME "EFI_VARS"
+
+#ifdef CFG_STMM_VOLATILE_STORAGE
+/*
+ * CI-only volatile backing for the StMM EFI_VARS file. QEMU virt with a bare
+ * U-Boot normal world has no RPMB device (and no supplicant that could
+ * provide one), so the regular TEE_STORAGE_PRIVATE_RPMB path fails, which
+ * leaves OpTeeRpmbFv's FVB instance invalid, FixupPcd patches the variable
+ * store base PCDs to garbage, and the StMM variable driver data-aborts at 0.
+ * Emulate the file with a RAM buffer using faithful semantics: first read
+ * before any write returns TEE_ERROR_ITEM_NOT_FOUND so the FVB driver
+ * (re)initializes its headers, subsequent reads/writes hit the buffer.
+ * Contents do not survive reboot. NEVER enable in production — real
+ * hardware keeps RPMB-backed storage.
+ */
+#define STMM_VOL_STORE_SIZE	(256 * 1024)
+static uint8_t stmm_vol_store[STMM_VOL_STORE_SIZE];
+static size_t stmm_vol_store_fsize;
+static bool stmm_vol_store_exists;
+
+static TEE_Result stmm_vol_read(void *va, unsigned long len,
+				unsigned long offset)
+{
+	if (!stmm_vol_store_exists)
+		return TEE_ERROR_ITEM_NOT_FOUND;
+	if (offset + len > stmm_vol_store_fsize)
+		return TEE_ERROR_CORRUPT_OBJECT;
+	memcpy(va, stmm_vol_store + offset, len);
+	return TEE_SUCCESS;
+}
+
+static TEE_Result stmm_vol_write(void *va, unsigned long len,
+				 unsigned long offset)
+{
+	if (offset + len > STMM_VOL_STORE_SIZE)
+		return TEE_ERROR_OUT_OF_MEMORY;
+	memcpy(stmm_vol_store + offset, va, len);
+	if (offset + len > stmm_vol_store_fsize)
+		stmm_vol_store_fsize = offset + len;
+	stmm_vol_store_exists = true;
+	return TEE_SUCCESS;
+}
+#else
+static TEE_Result stmm_vol_read(void *va __unused, unsigned long len __unused,
+				unsigned long offset __unused)
+{
+	return TEE_ERROR_NOT_SUPPORTED;
+}
+
+static TEE_Result stmm_vol_write(void *va __unused, unsigned long len __unused,
+				 unsigned long offset __unused)
+{
+	return TEE_ERROR_NOT_SUPPORTED;
+}
+#endif
+
 static void stmm_handle_storage_service(struct thread_scall_regs *regs)
 {
 	uint32_t flags = TEE_DATA_FLAG_ACCESS_READ |
@@ -812,14 +867,22 @@ static void stmm_handle_storage_service(struct thread_scall_regs *regs)
 	switch (action) {
 	case __FFA_SVC_RPMB_READ:
 		DMSG("RPMB read");
-		res = sec_storage_obj_read(TEE_STORAGE_PRIVATE_RPMB, obj_id,
-					   obj_id_len, va, len, offset, flags);
+		if (IS_ENABLED(CFG_STMM_VOLATILE_STORAGE))
+			res = stmm_vol_read(va, len, offset);
+		else
+			res = sec_storage_obj_read(TEE_STORAGE_PRIVATE_RPMB,
+						   obj_id, obj_id_len, va,
+						   len, offset, flags);
 		stmm_rc = tee2ffa_ret_val(res);
 		break;
 	case __FFA_SVC_RPMB_WRITE:
 		DMSG("RPMB write");
-		res = sec_storage_obj_write(TEE_STORAGE_PRIVATE_RPMB, obj_id,
-					    obj_id_len, va, len, offset, flags);
+		if (IS_ENABLED(CFG_STMM_VOLATILE_STORAGE))
+			res = stmm_vol_write(va, len, offset);
+		else
+			res = sec_storage_obj_write(TEE_STORAGE_PRIVATE_RPMB,
+						    obj_id, obj_id_len, va,
+						    len, offset, flags);
 		stmm_rc = tee2ffa_ret_val(res);
 		break;
 	default:
