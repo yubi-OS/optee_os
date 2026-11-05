@@ -1,7 +1,7 @@
 #ifndef PLAT_ROCKCHIP_SGRF_H
 #define PLAT_ROCKCHIP_SGRF_H
 
-#if defined(PLATFORM_FLAVOR_rk356x)
+#if (defined(PLATFORM_FLAVOR_rk3568) || defined(PLATFORM_FLAVOR_rk356x))
 
 /* SGRF controller register */
 #define SGRF_CON_OTP_CKE (1 << 2)
