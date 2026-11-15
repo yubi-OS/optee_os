@@ -67,7 +67,9 @@ static TEE_Result get_devices(uint32_t types,
 		add_ta(ta->flags, &ta->uuid, buf, blen, &pos, rflags);
 
 	if (stmm_get_uuid())
-		add_ta(TA_FLAG_DEVICE_ENUM_TEE_STORAGE_PRIVATE,
+		add_ta(IS_ENABLED(CFG_STMM_VOLATILE_STORAGE) ?
+		       TA_FLAG_DEVICE_ENUM :
+		       TA_FLAG_DEVICE_ENUM_TEE_STORAGE_PRIVATE,
 		       stmm_get_uuid(), buf, blen, &pos, rflags);
 
 	if (IS_ENABLED(CFG_EARLY_TA))
