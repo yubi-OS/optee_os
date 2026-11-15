@@ -677,24 +677,37 @@ static void stmm_handle_storage_service(struct thread_scall_regs *regs)
 	switch (req.op) {
 	case STMM_FFA_STORAGE_OP_READ:
 		DMSG("RPMB read");
-		if (IS_ENABLED(CFG_STMM_VOLATILE_STORAGE))
-			res = stmm_vol_read(req.data, req.data_len, req.offset);
-		else
-			res = sec_storage_obj_read(TEE_STORAGE_PRIVATE_RPMB,
+		res = sec_storage_obj_read(TEE_STORAGE_PRIVATE_RPMB,
+					   obj_id, obj_id_len,
+					   req.data, req.data_len,
+					   req.offset, flags);
+		if (res != TEE_SUCCESS && IS_ENABLED(CFG_REE_FS))
+			res = sec_storage_obj_read(TEE_STORAGE_PRIVATE_REE,
 						   obj_id, obj_id_len,
 						   req.data, req.data_len,
 						   req.offset, flags);
+		if (res == TEE_SUCCESS && IS_ENABLED(CFG_STMM_VOLATILE_STORAGE))
+			(void)stmm_vol_write(req.data, req.data_len, req.offset);
+		else if (res != TEE_SUCCESS && IS_ENABLED(CFG_STMM_VOLATILE_STORAGE))
+			res = stmm_vol_read(req.data, req.data_len, req.offset);
 		break;
 	case STMM_FFA_STORAGE_OP_WRITE:
 		DMSG("RPMB write");
-		if (IS_ENABLED(CFG_STMM_VOLATILE_STORAGE))
-			res = stmm_vol_write(req.data, req.data_len,
-					     req.offset);
-		else
-			res = sec_storage_obj_write(TEE_STORAGE_PRIVATE_RPMB,
+		res = sec_storage_obj_write(TEE_STORAGE_PRIVATE_RPMB,
+					    obj_id, obj_id_len,
+					    req.data, req.data_len,
+					    req.offset, flags);
+		if (res != TEE_SUCCESS && IS_ENABLED(CFG_REE_FS))
+			res = sec_storage_obj_write(TEE_STORAGE_PRIVATE_REE,
 						    obj_id, obj_id_len,
 						    req.data, req.data_len,
 						    req.offset, flags);
+		if (IS_ENABLED(CFG_STMM_VOLATILE_STORAGE)) {
+			TEE_Result vres = stmm_vol_write(req.data, req.data_len,
+							 req.offset);
+			if (res != TEE_SUCCESS)
+				res = vres;
+		}
 		break;
 	case STMM_FFA_STORAGE_OP_INVALID:
 		break;
